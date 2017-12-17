@@ -14,50 +14,31 @@ struct Arguments<'a> {
 }
 
 impl<'a> Arguments<'a> {
-    fn type_value_tokens<'s>(&'s self) -> (ArgumentsType<'s>, ArgumentsValue<'s>) {
-        (ArgumentsType(self), ArgumentsValue(self))
+    fn split(&self) -> (ArgumentsDeclaration, ArgumentsDefinition, ArgumentsInvoke) {
+        (ArgumentsDeclaration(self), ArgumentsDefinition(self), ArgumentsInvoke(self))
     }
 
-    fn to_tokens_value(&self, tokens: &mut Tokens) {
-        tokens.append("(");
-        if let Some(ref length) = self.is_array {
-            length.to_tokens_value(tokens);
-            tokens.append(",(");
-        }
-        for arg in &self.args {
-            arg.to_tokens_value(tokens);
-            tokens.append(",");
-        }
-        if self.is_array.is_some() {
-            tokens.append(")");
-        }
-        tokens.append(")");
+    fn declaration(&self) -> ArgumentsDeclaration {
+        ArgumentsDeclaration(self)
     }
-    
-    fn to_tokens_type(&self, tokens: &mut Tokens) {
-        tokens.append("(");
-        if self.is_array.is_some() {
-            tokens.append("usize,(");
-        }
-        for arg in &self.args {
-            arg.to_tokens_type(tokens);
-            tokens.append(",");
-        }
-        if self.is_array.is_some() {
-            tokens.append(")");
-        }
-        tokens.append(")");
+
+    fn definition(&self) -> ArgumentsDefinition {
+        ArgumentsDefinition(self)
     }
-    
+
+    fn invoke(&self) -> ArgumentsInvoke {
+        ArgumentsInvoke(self)
+    }
+
     fn parse_arguments(items: &[NestedMetaItem]) -> Arguments {
         let mut arguments = Arguments::default();
         for item in items {
             let item = match *item {
                 NestedMetaItem::MetaItem(ref item) => item,
-                NestedMetaItem::Literal(_) => 
+                NestedMetaItem::Literal(_) =>
                     panic!("arguments must be a list of `<ident> = \"<type>\"`"),
             };
-            
+
             let arg = Argument::from_meta_item(item);
             arguments.args.push(arg);
         }
@@ -65,19 +46,62 @@ impl<'a> Arguments<'a> {
     }
 }
 
-struct ArgumentsType<'a>(&'a Arguments<'a>);
+struct ArgumentsDefinition<'a>(&'a Arguments<'a>);
 
-impl<'a> ToTokens for ArgumentsType<'a> {
+impl<'a> ToTokens for ArgumentsDefinition<'a> {
     fn to_tokens(&self, tokens: &mut Tokens) {
-        self.0.to_tokens_type(tokens);
+        tokens.append("(");
+        if self.0.is_array.is_some() {
+            tokens.append("usize, (");
+        }
+        for arg in &self.0.args {
+            arg.to_tokens_type(tokens);
+            tokens.append(",");
+        }
+        if self.0.is_array.is_some() {
+            tokens.append(")");
+        }
+        tokens.append(")");
     }
 }
 
-struct ArgumentsValue<'a>(&'a Arguments<'a>);
+struct ArgumentsDeclaration<'a>(&'a Arguments<'a>);
 
-impl<'a> ToTokens for ArgumentsValue<'a> {
+impl<'a> ToTokens for ArgumentsDeclaration<'a> {
     fn to_tokens(&self, tokens: &mut Tokens) {
-        self.0.to_tokens_value(tokens);
+        tokens.append("(");
+        if let Some(ref length) = self.0.is_array {
+            length.to_tokens_value(tokens);
+            tokens.append(",(");
+        }
+        for arg in &self.0.args {
+            arg.to_tokens_value(tokens);
+            tokens.append(",");
+        }
+        if self.0.is_array.is_some() {
+            tokens.append(")");
+        }
+        tokens.append(")");
+    }
+}
+
+struct ArgumentsInvoke<'a>(&'a Arguments<'a>);
+
+impl <'a> ToTokens for ArgumentsInvoke<'a> {
+    fn to_tokens(&self, tokens: &mut Tokens) {
+        tokens.append("(");
+        if let Some(ref length) = self.0.is_array {
+            length.to_tokens_value(tokens);
+            tokens.append(" as usize, (");
+        }
+        for arg in &self.0.args {
+            arg.to_tokens_value(tokens);
+            tokens.append(",");
+        }
+        if self.0.is_array.is_some() {
+            tokens.append(")");
+        }
+        tokens.append(")");
     }
 }
 
@@ -97,11 +121,11 @@ impl<'a> Argument<'a> {
     fn to_tokens_value(&self, tokens: &mut Tokens) {
         tokens.append(self.ident);
     }
-    
+
     fn to_tokens_type(&self, tokens: &mut Tokens) {
         tokens.append(self.ty);
     }
-    
+
     fn from_meta_item(item: &MetaItem) -> Argument {
         match *item {
             MetaItem::NameValue(ref ident, ref lit) => {
@@ -134,11 +158,11 @@ impl<'a> ArrayLength<'a> {
             ArrayLength::Constant(size) => size.to_tokens(tokens),
         }
     }
-    
+
     fn to_tokens_type(&self, tokens: &mut Tokens) {
         tokens.append("usize");
     }
-    
+
     fn from_lit(lit: &Lit) -> ArrayLength {
         match *lit {
             Lit::Str(ref ident, _) => ArrayLength::Variable(ident),
@@ -157,17 +181,20 @@ fn arguments_printing() {
                 ident: "buffer",
                 ty: "&'buf [u8]",
             },
-            
+
             Argument {
                 ident: "num_tables",
                 ty: "usize",
             }
         ],
     };
-    
-    let (ty, value) = arguments.type_value_tokens();
-    let tokens = quote!( #value : #ty );
-    assert_eq!("( buffer , num_tables , ) : ( &'buf [u8] , usize , )", tokens.as_str());
+
+    let (def, dec, inv) = arguments.split();
+    let tokens = quote!( let #def : #dec; function( #inv ); );
+    assert_eq!(
+        "let ( buffer , num_tables , ) : ( &\'buf [u8] , usize , ) ; \
+         function ( ( buffer , num_tables , ) ) ;",
+        tokens.as_str());
 }
 
 #[test]
@@ -179,17 +206,19 @@ fn arguments_array_printing() {
                 ident: "buffer",
                 ty: "&'buf [u8]",
             },
-            
+
             Argument {
                 ident: "num_tables",
                 ty: "usize",
             }
         ],
     };
-    
-    let (ty, value) = arguments.type_value_tokens();
-    let tokens = quote!( #value : #ty );
+
+    let (def, dec, inv) = arguments.split();
+    let tokens = quote!( let #def : #dec; function( #inv ); );
     assert_eq!(
-        "( num_glyphs ,( buffer , num_tables , ) ) : ( usize,( &\'buf [u8] , usize , ) )",
+        "let ( num_glyphs ,( buffer , num_tables , ) ) : \
+         ( usize, ( &\'buf [u8] , usize , ) ) ; \
+         function ( ( num_glyphs  as usize, ( buffer , num_tables , ) ) ) ;",
         tokens.as_str());
 }

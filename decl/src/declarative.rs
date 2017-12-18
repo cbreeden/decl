@@ -73,6 +73,10 @@ pub trait DeclRead<'buf>: Sized {
     {
         DeclRead::parse_with::<Array<T>>(self, (length, argument))
     }
+
+    fn tag<T>(&mut self, tag: T) -> Result<&[u8], Error>
+    where
+        T: Tag;
 }
 
 impl<'buf> DeclRead<'buf> for &'buf [u8] {
@@ -94,10 +98,55 @@ impl<'buf> DeclRead<'buf> for &'buf [u8] {
         Ok(result)
     }
 
-    fn tag<T>(&mut self, tag: T) -> Result<(), Error>
+    fn tag<T>(&mut self, tag: T) -> Result<&[u8], Error>
     where
-        T: ,
+        T: Tag,
     {
-
+        Tag::validate(&tag, self)
     }
 }
+
+pub trait Tag {
+    fn validate<'b>(&self, buffer: &'b [u8]) -> Result<&'b [u8], Error>;
+}
+
+impl Tag for str {
+    fn validate<'b>(&self, buffer: &'b [u8]) -> Result<&'b [u8], Error> {
+        if buffer.len() < self.len() {
+            return Err(Error::InsufficientBytes)
+        }
+
+        match &buffer[..self.len()] == self.as_bytes() {
+            true => Ok(&buffer[self.len()..]),
+            false => Err(Error::InvalidVersion),
+        }
+    }
+}
+
+impl Tag for [u8] {
+    fn validate<'b>(&self, buffer: &'b [u8]) -> Result<&'b [u8], Error> {
+        if buffer.len() < self.len() {
+            return Err(Error::InsufficientBytes)
+        }
+
+        match &buffer[..self.len()] == self {
+            true => Ok(&buffer[self.len()..]),
+            false => Err(Error::InvalidVersion),
+        }
+    }
+}
+
+
+macro_rules! impl_tag_primitive {
+    ($($ty:ty),*) => {
+        $(
+            impl Tag for $ty {
+                fn validate<'b>(&self, buffer: &'b [u8]) -> Result<&'b [u8], Error> {
+                    Self::parse(buffer).map(|(_, buffer)| buffer)
+                }
+            }
+        )*
+    };
+}
+
+impl_tag_primitive!(u8, u16, u32, u64, i8, i16, i32, i64);

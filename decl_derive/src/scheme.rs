@@ -34,3 +34,9 @@ pub struct Thing<'buf> {
     #[argument(thing = "u32", buffer = "&'buf [u8]")]
     foo: Bar<'buf>,
 }
+
+/// Parsing strategy
+/// for each field: 
+///   for each attr: 
+///     if tag => generate tag validator
+///     if length | argument | relative_to => Array | Offset# | 
